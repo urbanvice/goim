@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Shopify/sarama"
 	pb "github.com/Terry-Mao/goim/api/logic"
 	"github.com/Terry-Mao/goim/internal/job/conf"
 	"github.com/bilibili/discovery/naming"
@@ -38,8 +39,11 @@ func New(c *conf.Config) *Job {
 
 func newKafkaSub(c *conf.Kafka) *cluster.Consumer {
 	config := cluster.NewConfig()
+	config.Version = sarama.V2_2_0_0
 	config.Consumer.Return.Errors = true
 	config.Group.Return.Notifications = true
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	config.Consumer.Offsets.CommitInterval = time.Second
 	consumer, err := cluster.NewConsumer(c.Brokers, c.Group, []string{c.Topic}, config)
 	if err != nil {
 		panic(err)
@@ -60,6 +64,11 @@ func (j *Job) Consume() {
 	for {
 		select {
 		case err := <-j.consumer.Errors():
+			cerr := err.(*cluster.Error)
+			if cerr.Ctx == "rebalance" && cerr.Error() == "EOF" {
+				// throw EOF while read topic with no message
+				continue
+			}
 			log.Errorf("consumer error(%v)", err)
 		case n := <-j.consumer.Notifications():
 			log.Infof("consumer rebalanced(%v)", n)
